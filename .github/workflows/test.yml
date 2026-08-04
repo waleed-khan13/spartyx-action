@@ -14,11 +14,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Node 20 is what action.yml declares, so the tests run on the runtime
-      # GitHub will actually hand the action rather than whatever is newer.
+      # Matches the runtime action.yml declares, so the tests run on what
+      # GitHub will actually hand the action. Node 20 is deprecated for
+      # actions - runners already force those onto 24 with a warning.
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Parsing and comment building
         run: node --test index.test.js
