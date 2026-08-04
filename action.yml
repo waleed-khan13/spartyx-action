@@ -1,0 +1,71 @@
+name: "Spartyx security scan"
+description: "Scan the repository for injection, XSS, secrets and vulnerable dependencies, and comment on the pull request."
+author: "CyberTool.dev"
+
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  api-key:
+    description: >-
+      A Spartyx API key. Create one under Settings -> API keys and store it as
+      an encrypted repository secret - never inline in the workflow file.
+    required: true
+
+  github-token:
+    description: >-
+      Token used to read the repository and to write the pull request comment.
+      The default GITHUB_TOKEN is enough; it is scoped to this repository and
+      expires when the job ends. The workflow needs `pull-requests: write` for
+      the comment and `contents: read` for the scan.
+    required: false
+    default: ${{ github.token }}
+
+  mode:
+    description: "Scan depth: ghost (fast), recon, or axiom (deepest)."
+    required: false
+    default: "ghost"
+
+  fail-on:
+    description: >-
+      Fail the job when a finding at or above this severity is found:
+      critical, high, medium, low, or none to never fail.
+    required: false
+    default: "high"
+
+  comment:
+    description: "Post a summary comment on the pull request."
+    required: false
+    default: "true"
+
+  sarif-file:
+    description: >-
+      Where to write the SARIF result. Feed it to
+      github/codeql-action/upload-sarif to get findings into the Security tab.
+    required: false
+    default: "spartyx.sarif"
+
+  api-url:
+    description: "Spartyx API base URL. Only set this for a self-hosted backend."
+    required: false
+    default: "https://cypertech.onrender.com"
+
+  timeout-minutes:
+    description: "How long to wait for the scan before giving up."
+    required: false
+    default: "20"
+
+outputs:
+  total:
+    description: "Total number of findings."
+  critical:
+    description: "Number of critical findings."
+  high:
+    description: "Number of high findings."
+  sarif-file:
+    description: "Path to the SARIF file that was written."
+
+runs:
+  using: "node20"
+  main: "index.js"

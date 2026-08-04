@@ -1,0 +1,27 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Node 20 is what action.yml declares, so the tests run on the runtime
+      # GitHub will actually hand the action rather than whatever is newer.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Parsing and comment building
+        run: node --test index.test.js
+
+      - name: The whole action, against stub servers
+        run: node --test e2e.test.js
