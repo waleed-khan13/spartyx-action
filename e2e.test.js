@@ -305,3 +305,79 @@ test("a missing api key fails immediately without calling anything", async (t) =
   assert.equal(api.calls.length, 0);
   assert.match(result.stdout, /No api-key supplied/);
 });
+
+test("pins the head commit and sends the run's provenance", async (t) => {
+  const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "spartyx-run-"));
+  const api = await startStub(apiHandler(sarifWith([])));
+  const gh = await startStub(githubHandler([]));
+  t.after(() => {
+    api.server.close();
+    gh.server.close();
+  });
+
+  const headSha = "0123456789abcdef0123456789abcdef01234567"; // pragma: allowlist secret
+  const event = eventFile({
+    pull_request: { number: 7, head: { sha: headSha, ref: "feature" } },
+    repository: { private: false },
+  });
+
+  await runAction(
+    baseEnv({
+      apiPort: api.port,
+      ghPort: gh.port,
+      event,
+      workdir,
+      extra: { GITHUB_RUN_ID: "4242", GITHUB_ACTOR: "someone", GITHUB_EVENT_NAME: "pull_request" },
+    }),
+    workdir,
+  );
+
+  const scanCall = api.calls.find((c) => c.url === "/api/scan-repo");
+  // The branch could move while the scan runs. The commit cannot.
+  assert.equal(scanCall.body.commit_sha, headSha);
+  assert.equal(scanCall.body.branch, "feature");
+
+  const context = JSON.parse(scanCall.headers["x-ci-context"]);
+  assert.equal(context.provider, "github-actions");
+  assert.equal(context.sha, headSha);
+  assert.equal(context.pull_request, 7);
+  assert.equal(context.run_id, "4242");
+  // Provenance travels in a header, and carries no credential of any kind.
+  assert.equal(scanCall.headers["x-ci-context"].includes(GH_TOKEN), false);
+  assert.equal(scanCall.headers["x-ci-context"].includes(API_KEY), false);
+});
+
+test("a plan refusal is reported as its own sentence, not [object Object]", async (t) => {
+  const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "spartyx-run-"));
+  const api = await startStub((req, res) => {
+    res.writeHead(402, { "content-type": "application/json" });
+    // The exact shape the backend returns for a plan refusal.
+    res.end(
+      JSON.stringify({
+        detail: {
+          error: "API keys and CI scanning are part of Pro. This account is on the Beta plan.",
+          upgrade_required: true,
+          upgrade_url: "/pricing",
+        },
+      }),
+    );
+  });
+  const gh = await startStub(githubHandler([]));
+  t.after(() => {
+    api.server.close();
+    gh.server.close();
+  });
+
+  const event = eventFile({ pull_request: { number: 7, head: { sha: "abc1234", ref: "f" } } });
+  const result = await runAction(
+    baseEnv({ apiPort: api.port, ghPort: gh.port, event, workdir }),
+    workdir,
+  );
+
+  assert.equal(result.code, 1);
+  assert.match(result.stdout, /part of Pro/);
+  assert.match(result.stdout, /pricing/);
+  assert.equal(result.stdout.includes("[object Object]"), false);
+  // Even on the error path, nothing secret is printed.
+  assert.equal(result.stdout.includes(API_KEY), false);
+});

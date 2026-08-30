@@ -63,6 +63,12 @@ outputs:
     description: "Number of critical findings."
   high:
     description: "Number of high findings."
+  medium:
+    description: "Number of medium findings."
+  low:
+    description: "Number of low findings."
+  scan-id:
+    description: "The completed scan id, for linking to the full report."
   sarif-file:
     description: "Path to the SARIF file that was written."
 

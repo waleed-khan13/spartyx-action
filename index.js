@@ -76,7 +76,14 @@ async function api(url, { method = "GET", headers = {}, body, apiKey } = {}) {
   }
 
   if (!response.ok) {
-    const detail = (parsed && (parsed.detail || parsed.error)) || text.slice(0, 300);
+    // A plan or limit refusal arrives as an object with its own message and an
+    // upgrade url. Reading it as a string printed "[object Object]" in place of
+    // the one sentence that says what to do.
+    const raw = parsed && (parsed.detail || parsed.error);
+    const detail =
+      (typeof raw === "string" && raw) ||
+      (raw && typeof raw === "object" && [raw.error, raw.upgrade_url && `See https://www.cybertool.dev${raw.upgrade_url}`].filter(Boolean).join(" ")) ||
+      text.slice(0, 300);
     throw new Error(redact(`${method} ${new URL(url).pathname} failed (${response.status}): ${detail}`));
   }
   return parsed;
@@ -90,7 +97,23 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * SARIF carries severity in `level` (error/warning/note) and, when the producer
  * sets it, a precise severity in properties. Prefer the precise one so a
  * "critical" is not flattened into "error" alongside every "high".
+ *
+ * Spartyx writes `spartyxSeverity` on each result for exactly this reason. The
+ * other keys are for SARIF from anywhere else, and the numeric
+ * `security-severity` - which is what GitHub itself reads - is the last resort
+ * before falling back to the three-way level.
  */
+function severityFromScore(score) {
+  const value = Number(score);
+  if (!Number.isFinite(value)) return null;
+  // GitHub's own buckets, so a number we did not write is read the way the
+  // Security tab will read it.
+  if (value >= 9) return "critical";
+  if (value >= 7) return "high";
+  if (value >= 4) return "medium";
+  return "low";
+}
+
 function findingsFromSarif(sarif) {
   const findings = [];
   for (const run of sarif?.runs || []) {
@@ -100,9 +123,11 @@ function findingsFromSarif(sarif) {
     for (const result of run.results || []) {
       const rule = rules.get(result.ruleId) || {};
       const precise =
+        result.properties?.spartyxSeverity ||
         result.properties?.severity ||
         rule.properties?.["security-severity-label"] ||
-        rule.properties?.severity;
+        rule.properties?.severity ||
+        severityFromScore(rule.properties?.["security-severity"]);
 
       const level = result.level || rule.defaultConfiguration?.level || "warning";
       const severity = String(
@@ -216,6 +241,23 @@ async function upsertComment({ token, repository, prNumber, body }) {
 
 // --- Main -------------------------------------------------------------------
 
+/** What the runner claims about itself, for the dashboard to display. */
+function ciContext({ repository, branch, sha, prNumber }) {
+  const runId = process.env.GITHUB_RUN_ID;
+  const serverUrl = process.env.GITHUB_SERVER_URL || "https://github.com";
+  return {
+    provider: "github-actions",
+    repository,
+    ref: branch || undefined,
+    sha: sha || undefined,
+    run_id: runId || undefined,
+    run_url: runId ? `${serverUrl}/${repository}/actions/runs/${runId}` : undefined,
+    pull_request: prNumber || undefined,
+    actor: process.env.GITHUB_ACTOR || undefined,
+    event: process.env.GITHUB_EVENT_NAME || undefined,
+  };
+}
+
 async function run() {
   const apiKey = input("api-key");
   const githubToken = input("github-token");
@@ -258,10 +300,19 @@ async function run() {
     // The repository is read with the workflow's own token rather than a
     // Spartyx GitHub App installation, so this works with no app installed and
     // grants no access that outlives the job.
-    headers: { "X-GitHub-Token": githubToken },
+    headers: {
+      "X-GitHub-Token": githubToken,
+      // Provenance only, so the scan in the dashboard can be traced back to
+      // the run that caused it. Nothing here authorises anything.
+      "X-CI-Context": JSON.stringify(ciContext({ repository, branch, sha, prNumber })),
+    },
     body: {
       repository,
       branch,
+      // The branch can move between this call and the scan finishing. Pinning
+      // the commit means the report is about the code that was reviewed, not
+      // whatever landed while it ran.
+      commit_sha: /^[0-9a-f]{7,64}$/i.test(sha) ? sha : undefined,
       mode,
       async_job: true,
       retain_source: false,
@@ -315,6 +366,9 @@ async function run() {
   setOutput("total", String(findings.length));
   setOutput("critical", String(counts.critical));
   setOutput("high", String(counts.high));
+  setOutput("medium", String(counts.medium));
+  setOutput("low", String(counts.low));
+  setOutput("scan-id", String(scanId));
   setOutput("sarif-file", sarifFile);
 
   log(
@@ -370,6 +424,8 @@ if (require.main === module && !process.env.NODE_TEST_CONTEXT) {
 }
 
 module.exports = {
+  ciContext,
+  severityFromScore,
   findingsFromSarif,
   countBySeverity,
   buildComment,

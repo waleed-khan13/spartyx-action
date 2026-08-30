@@ -8,6 +8,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  ciContext,
+  severityFromScore,
   findingsFromSarif,
   countBySeverity,
   buildComment,
@@ -159,4 +161,72 @@ test("redaction ignores values too short to be a real secret", () => {
   secrets.push("abc");
   // Otherwise a short value would blank out ordinary words in the log.
   assert.equal(redact("abc def"), "abc def");
+});
+
+// --- Severity, as Spartyx actually writes it --------------------------------
+
+test("prefers the severity Spartyx puts on the result", () => {
+  // spartyxSeverity exists precisely because SARIF's level cannot tell a
+  // critical from a high, and fail-on has to.
+  const [finding] = findingsFromSarif({
+    runs: [
+      {
+        tool: { driver: { rules: [{ id: "r1", properties: { "security-severity": "5.5" } }] } },
+        results: [{ ruleId: "r1", level: "error", properties: { spartyxSeverity: "critical" } }],
+      },
+    ],
+  });
+  assert.equal(finding.severity, "critical");
+});
+
+test("reads GitHub's numeric security-severity when there is no word", () => {
+  const rules = [
+    { id: "r1", properties: { "security-severity": "9.5" } },
+    { id: "r2", properties: { "security-severity": "8.0" } },
+    { id: "r3", properties: { "security-severity": "5.5" } },
+    { id: "r4", properties: { "security-severity": "3.0" } },
+  ];
+  const findings = findingsFromSarif({
+    runs: [
+      {
+        tool: { driver: { rules } },
+        results: rules.map((rule) => ({ ruleId: rule.id, level: "error" })),
+      },
+    ],
+  });
+  // Every one of these is level "error"; only the number separates them.
+  assert.deepEqual(findings.map((f) => f.severity), ["critical", "high", "medium", "low"]);
+});
+
+test("a security-severity that is not a number is ignored, not guessed at", () => {
+  assert.equal(severityFromScore("critical"), null);
+  assert.equal(severityFromScore(undefined), null);
+  assert.equal(severityFromScore("9.5"), "critical");
+});
+
+// --- CI provenance ----------------------------------------------------------
+
+test("the CI context describes the run and nothing else", () => {
+  const context = ciContext({ repository: "acme/api", branch: "feature", sha: "abc1234", prNumber: 7 });
+  assert.equal(context.provider, "github-actions");
+  assert.equal(context.repository, "acme/api");
+  assert.equal(context.sha, "abc1234");
+  assert.equal(context.pull_request, 7);
+  // No token, and no key. This is provenance, not authorisation.
+  assert.equal(JSON.stringify(context).includes("token"), false);
+});
+
+test("absent GitHub variables are omitted rather than sent as undefined strings", () => {
+  const saved = { ...process.env };
+  delete process.env.GITHUB_RUN_ID;
+  delete process.env.GITHUB_ACTOR;
+  try {
+    const context = ciContext({ repository: "acme/api", branch: null, sha: "", prNumber: null });
+    const serialised = JSON.parse(JSON.stringify(context));
+    assert.equal("run_id" in serialised, false);
+    assert.equal("ref" in serialised, false);
+    assert.equal("sha" in serialised, false);
+  } finally {
+    process.env = saved;
+  }
 });

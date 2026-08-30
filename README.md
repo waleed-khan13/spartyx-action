@@ -16,6 +16,9 @@ arrives to where it does damage — including when that path crosses files.
 
 No checkout step. Nothing to install. No GitHub App.
 
+Requires a Spartyx **Pro** plan — API keys are what CI authenticates with, and
+they are part of Pro.
+
 ---
 
 ## Contents
@@ -113,6 +116,9 @@ scan cannot spill either into your build log.
 | `total` | Total number of findings. |
 | `critical` | Number of critical findings. |
 | `high` | Number of high findings. |
+| `medium` | Number of medium findings. |
+| `low` | Number of low findings. |
+| `scan-id` | The scan id, for linking to the full report. |
 | `sarif-file` | Path to the SARIF file that was written. |
 
 ---
@@ -282,9 +288,11 @@ your build over a comment it was never allowed to post.
 
 **Not a pull request?** It scans and skips the comment. Not an error.
 
-**The head commit, not the merge commit.** On a pull request GitHub checks out a
-merge commit that exists nowhere else. The scan targets the branch head, which is
-what a reviewer is actually reading.
+**The head commit, not the merge commit, and pinned.** On a pull request GitHub
+checks out a merge commit that exists nowhere else. The scan targets the branch
+head, which is what a reviewer is actually reading — and it sends that exact
+commit sha, so a push landing while the scan runs cannot change what the report
+is about.
 
 **Timeouts fail loudly.** If the scan has not finished within `timeout-minutes`,
 the job fails saying so rather than passing on no result.
@@ -307,6 +315,11 @@ denies access to your secrets. See
 **`POST /api/scan-repo failed (401)`**
 The API key is wrong, revoked, or belongs to a suspended account. Create a new
 one under **Settings → API keys** and update the secret.
+
+**`POST /api/scan-repo failed (402): API keys and CI scanning are part of Pro.`**
+The account behind this key is on Beta. CI scanning is a Pro feature — upgrade
+at [cybertool.dev/pricing](https://www.cybertool.dev/pricing), and the same key
+starts working.
 
 **`Could not post the comment (403)` — and the job still passed**
 The workflow is missing `pull-requests: write`. Add the permission block:
